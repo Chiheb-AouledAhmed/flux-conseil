@@ -1,0 +1,13 @@
+{
+  "name": "flux-conseil-site",
+  "version": "1.0.0",
+  "description": "Flux Conseil — site + backend (contact form, dashboard stats)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
