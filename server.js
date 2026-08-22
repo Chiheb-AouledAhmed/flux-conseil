@@ -73,24 +73,21 @@ app.post('/api/contact', async (req, res) => {
   all.push(entry);
   writeSubmissions(all);
 
-  if (!mailTransport) {
-    return res.status(503).json({
-      ok: false,
-      error: 'Le service email n\'est pas configuré sur le serveur.',
-    });
-  }
+  // Respond immediately to the client
+  res.json({ ok: true });
 
-  const mailBody = [
-    `Nom: ${entry.name}`,
-    `Entreprise: ${entry.company || 'Non renseignée'}`,
-    `Reçu le: ${entry.receivedAt}`,
-    '',
-    'Demande:',
-    entry.message,
-  ].join('\n');
+  // Send email in the background (don't wait for it)
+  if (mailTransport) {
+    const mailBody = [
+      `Nom: ${entry.name}`,
+      `Entreprise: ${entry.company || 'Non renseignée'}`,
+      `Reçu le: ${entry.receivedAt}`,
+      '',
+      'Demande:',
+      entry.message,
+    ].join('\n');
 
-  try {
-    await mailTransport.sendMail({
+    mailTransport.sendMail({
       from: process.env.MAIL_FROM,
       to: process.env.MAIL_TO,
       replyTo: process.env.MAIL_FROM,
@@ -103,16 +100,10 @@ app.post('/api/contact', async (req, res) => {
         <hr>
         <p><strong>Demande:</strong></p>
         <p>${entry.message.replaceAll('\n', '<br>')}</p>`,
-    });
-  } catch (error) {
-    console.error('Email delivery failed:', error.message);
-    return res.status(502).json({
-      ok: false,
-      error: 'Le message a été enregistré, mais l\'email n\'a pas pu être envoyé.',
+    }).catch(error => {
+      console.error('Email delivery failed:', error.message);
     });
   }
-
-  res.json({ ok: true });
 });
 
 // List submissions (simple admin view — protect this before going live, see README)
