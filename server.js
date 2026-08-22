@@ -78,7 +78,7 @@ app.post('/api/contact', async (req, res) => {
 
   // Send email in the background (don't wait for it)
   if (mailTransport) {
-    console.log('Sending email to:', process.env.MAIL_TO);
+    console.log(`[${new Date().toISOString()}] Attempting to send email to:`, process.env.MAIL_TO);
     const mailBody = [
       `Nom: ${entry.name}`,
       `Entreprise: ${entry.company || 'Non renseignée'}`,
@@ -103,13 +103,16 @@ app.post('/api/contact', async (req, res) => {
         <p>${entry.message.replaceAll('\n', '<br>')}</p>`,
     };
 
+    console.log(`[${new Date().toISOString()}] Calling sendMail...`);
     mailTransport.sendMail(mailOptions, (error, info) => {
+      console.log(`[${new Date().toISOString()}] Callback invoked`);
       if (error) {
-        console.error('Email delivery failed:', error.message);
+        console.error(`[${new Date().toISOString()}] Email delivery failed:`, error.message, error);
       } else {
-        console.log('Email sent successfully:', info.response);
+        console.log(`[${new Date().toISOString()}] Email sent successfully:`, info.response);
       }
     });
+    console.log(`[${new Date().toISOString()}] sendMail call returned (async)`);
   } else {
     console.warn('Mail transport not configured');
   }
@@ -136,7 +139,15 @@ app.get('/api/stats', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Flux Conseil server running on http://localhost:${PORT}`);
   console.log(`Mail configured: ${mailConfigured}`);
-  if (mailConfigured) {
+  if (mailConfigured && mailTransport) {
     console.log(`Sending emails to: ${process.env.MAIL_TO}`);
+    console.log('Testing SMTP connection...');
+    mailTransport.verify((error, success) => {
+      if (error) {
+        console.error('SMTP verification failed:', error.message);
+      } else {
+        console.log('SMTP connection verified ✓');
+      }
+    });
   }
 });
