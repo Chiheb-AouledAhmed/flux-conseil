@@ -4,11 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import nodemailer from 'nodemailer';
 import dns from 'dns';
-import net from 'net';
 import 'dotenv/config';
-
-// Force IPv4 for DNS resolution (fixes Render IPv6 issues with Gmail SMTP)
-dns.setDefaultResultOrder('ipv4first');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,43 +25,60 @@ const mailConfigured = Boolean(
   !process.env.MAIL_TO.includes('example.com')
 );
 
-// Helper to resolve hostname to IPv4 address only
+// Resolve via the OS resolver (dns.lookup), not dns.resolve4/resolve6:
+// nodemailer's own SMTP connection resolves hosts with the c-ares resolver
+// and picks randomly between the IPv4/IPv6 results, which fails with
+// ENETUNREACH on Render (no outbound IPv6 route). Pre-resolving to a literal
+// IPv4 address here makes nodemailer skip its own resolver entirely.
 function resolveIPv4(hostname) {
   return new Promise((resolve, reject) => {
-    dns.resolve4(hostname, (err, addresses) => {
-      if (err) {
-        reject(err);
-      } else if (addresses.length > 0) {
-        resolve(addresses[0]);
-      } else {
-        reject(new Error('No IPv4 address found'));
-      }
+    dns.lookup(hostname, { family: 4 }, (err, address) => {
+      if (err) reject(err);
+      else resolve(address);
     });
   });
 }
 
-// Create mail transport with IPv4-forced connection
+function buildTransport(host, servername) {
+  return nodemailer.createTransport({
+    host,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === 'true',
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 45000,
+    // Needed for TLS SNI/cert validation when `host` is a literal IP.
+    ...(servername ? { servername } : {}),
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+}
+
+function verifyTransport(transport) {
+  console.log('Testing SMTP connection...');
+  transport.verify(error => {
+    if (error) {
+      console.error('SMTP verification failed:', error.message);
+    } else {
+      console.log('SMTP connection verified ✓');
+    }
+  });
+}
+
 let mailTransport = null;
 if (mailConfigured) {
-  // Pre-resolve the hostname to IPv4 to avoid IPv6 issues on Render
   resolveIPv4(process.env.SMTP_HOST)
     .then(ipv4 => {
-      mailTransport = nodemailer.createTransport({
-        host: ipv4,
-        port: Number(process.env.SMTP_PORT || 587),
-        secure: process.env.SMTP_SECURE === 'true',
-        connectionTimeout: 30000,
-        greetingTimeout: 30000,
-        socketTimeout: 45000,
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
-      });
+      mailTransport = buildTransport(ipv4, process.env.SMTP_HOST);
       console.log(`[${new Date().toISOString()}] Mail transport created with IPv4: ${ipv4}`);
+      verifyTransport(mailTransport);
     })
     .catch(err => {
-      console.error(`[${new Date().toISOString()}] Failed to resolve SMTP host to IPv4:`, err.message);
+      console.error(`[${new Date().toISOString()}] Failed to resolve SMTP host to IPv4, falling back to hostname:`, err.message);
+      mailTransport = buildTransport(process.env.SMTP_HOST);
+      verifyTransport(mailTransport);
     });
 }
 
@@ -169,15 +182,7 @@ app.get('/api/stats', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Flux Conseil server running on http://localhost:${PORT}`);
   console.log(`Mail configured: ${mailConfigured}`);
-  if (mailConfigured && mailTransport) {
+  if (mailConfigured) {
     console.log(`Sending emails to: ${process.env.MAIL_TO}`);
-    console.log('Testing SMTP connection...');
-    mailTransport.verify((error, success) => {
-      if (error) {
-        console.error('SMTP verification failed:', error.message);
-      } else {
-        console.log('SMTP connection verified ✓');
-      }
-    });
   }
 });
