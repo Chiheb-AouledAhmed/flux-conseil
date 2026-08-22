@@ -3,7 +3,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 import 'dotenv/config';
+
+// Force IPv4 for DNS resolution (fixes Render IPv6 issues with Gmail SMTP)
+dns.setDefaultResultOrder('ipv4first');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,7 +35,6 @@ const mailTransport = mailConfigured
       connectionTimeout: 30000,
       greetingTimeout: 30000,
       socketTimeout: 45000,
-      family: 4,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
