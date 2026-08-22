@@ -88,7 +88,7 @@ app.post('/api/contact', async (req, res) => {
       entry.message,
     ].join('\n');
 
-    mailTransport.sendMail({
+    const mailOptions = {
       from: process.env.MAIL_FROM,
       to: process.env.MAIL_TO,
       replyTo: process.env.MAIL_FROM,
@@ -101,10 +101,14 @@ app.post('/api/contact', async (req, res) => {
         <hr>
         <p><strong>Demande:</strong></p>
         <p>${entry.message.replaceAll('\n', '<br>')}</p>`,
-    }).then(info => {
-      console.log('Email sent successfully:', info.response);
-    }).catch(error => {
-      console.error('Email delivery failed:', error.message, error.code);
+    };
+
+    mailTransport.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.error('Email delivery failed:', error.message);
+      } else {
+        console.log('Email sent successfully:', info.response);
+      }
     });
   } else {
     console.warn('Mail transport not configured');
