@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import nodemailer from 'nodemailer';
 import dns from 'dns';
+import net from 'net';
 import 'dotenv/config';
 
 // Force IPv4 for DNS resolution (fixes Render IPv6 issues with Gmail SMTP)
@@ -27,20 +28,46 @@ const mailConfigured = Boolean(
   !process.env.MAIL_FROM.includes('example.com') &&
   !process.env.MAIL_TO.includes('example.com')
 );
-const mailTransport = mailConfigured
-  ? nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: process.env.SMTP_SECURE === 'true',
-      connectionTimeout: 30000,
-      greetingTimeout: 30000,
-      socketTimeout: 45000,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
+
+// Helper to resolve hostname to IPv4 address only
+function resolveIPv4(hostname) {
+  return new Promise((resolve, reject) => {
+    dns.resolve4(hostname, (err, addresses) => {
+      if (err) {
+        reject(err);
+      } else if (addresses.length > 0) {
+        resolve(addresses[0]);
+      } else {
+        reject(new Error('No IPv4 address found'));
+      }
+    });
+  });
+}
+
+// Create mail transport with IPv4-forced connection
+let mailTransport = null;
+if (mailConfigured) {
+  // Pre-resolve the hostname to IPv4 to avoid IPv6 issues on Render
+  resolveIPv4(process.env.SMTP_HOST)
+    .then(ipv4 => {
+      mailTransport = nodemailer.createTransport({
+        host: ipv4,
+        port: Number(process.env.SMTP_PORT || 587),
+        secure: process.env.SMTP_SECURE === 'true',
+        connectionTimeout: 30000,
+        greetingTimeout: 30000,
+        socketTimeout: 45000,
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+      console.log(`[${new Date().toISOString()}] Mail transport created with IPv4: ${ipv4}`);
     })
-  : null;
+    .catch(err => {
+      console.error(`[${new Date().toISOString()}] Failed to resolve SMTP host to IPv4:`, err.message);
+    });
+}
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
