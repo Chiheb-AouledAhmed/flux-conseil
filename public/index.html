@@ -496,19 +496,26 @@
       message: form.message.value
     };
     try{
+      const controller = new AbortController();
+      const requestTimeout = setTimeout(() => controller.abort(), 20000);
       const res = await fetch('/api/contact', {
         method:'POST',
         headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       });
-      if(!res.ok) throw new Error('request failed');
+      clearTimeout(requestTimeout);
+      const result = await res.json().catch(() => ({}));
+      if(!res.ok) throw new Error(result.error || 'Le message n\'a pas pu être envoyé.');
       showToast('Message envoyé — nous revenons vers vous rapidement.');
       status.textContent = 'Message envoyé — nous revenons vers vous rapidement.';
       status.style.color = 'var(--gas)';
       status.style.display = 'block';
       form.reset();
     }catch(err){
-      const errMsg = "Le serveur n'est pas joignable pour le moment (backend non démarré, ou site hébergé en statique seul). Contactez-nous directement à fluxconseil.contact@gmail.com.";
+      const errMsg = err.name === 'AbortError'
+        ? 'Le serveur met trop de temps à répondre. Vérifiez la configuration SMTP sur Render.'
+        : err.message || "Le serveur n'est pas joignable pour le moment. Contactez-nous directement à fluxconseil.contact@gmail.com.";
       showToast(errMsg, true);
       status.textContent = errMsg;
       status.style.color = 'var(--rust)';
