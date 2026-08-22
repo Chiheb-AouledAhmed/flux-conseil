@@ -37,20 +37,27 @@ and the contact form shows a message pointing people to your email instead.
 
 ## Email configuration
 
+Email is sent via the [Resend](https://resend.com) HTTP API rather than raw
+SMTP, because Render (and most PaaS hosts) block outbound SMTP ports
+(25/465/587) at the platform level — no SMTP provider works from a Render
+web service regardless of host/port.
+
 Set these environment variables before starting the server:
 
 ```
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=your-smtp-username
-SMTP_PASS=your-smtp-password
-MAIL_FROM=website@example.com
+RESEND_API_KEY=your-resend-api-key
+MAIL_FROM=onboarding@resend.dev
 MAIL_TO=your-real-email@example.com
 ```
 
 `MAIL_TO` is the real inbox that receives contact messages. Keep these values
 in `.env` or your hosting provider's secret settings; never commit them.
+
+Without a verified domain on Resend, `MAIL_FROM` must stay
+`onboarding@resend.dev` and `MAIL_TO` must match the email address you signed
+up to Resend with — an anti-abuse restriction on unverified accounts. Verify
+your own domain on Resend to send from your own address and to any
+recipient.
 
 ## Before going live
 

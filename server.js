@@ -2,8 +2,6 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import nodemailer from 'nodemailer';
-import dns from 'dns';
 import 'dotenv/config';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,73 +11,30 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SUBMISSIONS_FILE = path.join(__dirname, 'submissions.json');
 const mailConfigured = Boolean(
-  process.env.SMTP_HOST &&
-  process.env.SMTP_USER &&
-  process.env.SMTP_PASS &&
+  process.env.RESEND_API_KEY &&
   process.env.MAIL_FROM &&
   process.env.MAIL_TO &&
-  !process.env.SMTP_HOST.includes('example.com') &&
-  !process.env.SMTP_USER.startsWith('your-') &&
-  !process.env.SMTP_PASS.startsWith('your-') &&
+  !process.env.RESEND_API_KEY.startsWith('your-') &&
   !process.env.MAIL_FROM.includes('example.com') &&
   !process.env.MAIL_TO.includes('example.com')
 );
 
-// Resolve via the OS resolver (dns.lookup), not dns.resolve4/resolve6:
-// nodemailer's own SMTP connection resolves hosts with the c-ares resolver
-// and picks randomly between the IPv4/IPv6 results, which fails with
-// ENETUNREACH on Render (no outbound IPv6 route). Pre-resolving to a literal
-// IPv4 address here makes nodemailer skip its own resolver entirely.
-function resolveIPv4(hostname) {
-  return new Promise((resolve, reject) => {
-    dns.lookup(hostname, { family: 4 }, (err, address) => {
-      if (err) reject(err);
-      else resolve(address);
-    });
-  });
-}
-
-function buildTransport(host, servername) {
-  return nodemailer.createTransport({
-    host,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === 'true',
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 45000,
-    // Needed for TLS SNI/cert validation when `host` is a literal IP.
-    ...(servername ? { servername } : {}),
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
+// Sent over HTTPS via Resend's API instead of raw SMTP: Render blocks
+// outbound SMTP ports (25/465/587) at the platform level, so no SMTP
+// provider works from a Render web service regardless of host/port.
+async function sendMail({ to, from, replyTo, subject, text, html }) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ from, to, reply_to: replyTo, subject, text, html }),
   });
-}
-
-function verifyTransport(transport) {
-  console.log('Testing SMTP connection...');
-  transport.verify(error => {
-    if (error) {
-      console.error('SMTP verification failed:', error.message);
-    } else {
-      console.log('SMTP connection verified ✓');
-    }
-  });
-}
-
-let mailTransport = null;
-if (mailConfigured) {
-  resolveIPv4(process.env.SMTP_HOST)
-    .then(ipv4 => {
-      mailTransport = buildTransport(ipv4, process.env.SMTP_HOST);
-      console.log(`[${new Date().toISOString()}] Mail transport created with IPv4: ${ipv4}`);
-      verifyTransport(mailTransport);
-    })
-    .catch(err => {
-      console.error(`[${new Date().toISOString()}] Failed to resolve SMTP host to IPv4, falling back to hostname:`, err.message);
-      mailTransport = buildTransport(process.env.SMTP_HOST);
-      verifyTransport(mailTransport);
-    });
+  if (!res.ok) {
+    throw new Error(`Resend API error ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
 }
 
 app.use(express.json());
@@ -120,7 +75,7 @@ app.post('/api/contact', async (req, res) => {
   res.json({ ok: true });
 
   // Send email in the background (don't wait for it)
-  if (mailTransport) {
+  if (mailConfigured) {
     console.log(`[${new Date().toISOString()}] Attempting to send email to:`, process.env.MAIL_TO);
     const mailBody = [
       `Nom: ${entry.name}`,
@@ -131,7 +86,7 @@ app.post('/api/contact', async (req, res) => {
       entry.message,
     ].join('\n');
 
-    const mailOptions = {
+    sendMail({
       from: process.env.MAIL_FROM,
       to: process.env.MAIL_TO,
       replyTo: process.env.MAIL_FROM,
@@ -144,20 +99,15 @@ app.post('/api/contact', async (req, res) => {
         <hr>
         <p><strong>Demande:</strong></p>
         <p>${entry.message.replaceAll('\n', '<br>')}</p>`,
-    };
-
-    console.log(`[${new Date().toISOString()}] Calling sendMail...`);
-    mailTransport.sendMail(mailOptions, (error, info) => {
-      console.log(`[${new Date().toISOString()}] Callback invoked`);
-      if (error) {
-        console.error(`[${new Date().toISOString()}] Email delivery failed:`, error.message, error);
-      } else {
-        console.log(`[${new Date().toISOString()}] Email sent successfully:`, info.response);
-      }
-    });
-    console.log(`[${new Date().toISOString()}] sendMail call returned (async)`);
+    })
+      .then(() => {
+        console.log(`[${new Date().toISOString()}] Email sent successfully`);
+      })
+      .catch(error => {
+        console.error(`[${new Date().toISOString()}] Email delivery failed:`, error.message);
+      });
   } else {
-    console.warn('Mail transport not configured');
+    console.warn('Mail not configured');
   }
 });
 
