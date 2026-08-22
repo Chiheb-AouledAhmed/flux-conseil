@@ -78,6 +78,7 @@ app.post('/api/contact', async (req, res) => {
 
   // Send email in the background (don't wait for it)
   if (mailTransport) {
+    console.log('Sending email to:', process.env.MAIL_TO);
     const mailBody = [
       `Nom: ${entry.name}`,
       `Entreprise: ${entry.company || 'Non renseignée'}`,
@@ -100,9 +101,13 @@ app.post('/api/contact', async (req, res) => {
         <hr>
         <p><strong>Demande:</strong></p>
         <p>${entry.message.replaceAll('\n', '<br>')}</p>`,
+    }).then(info => {
+      console.log('Email sent successfully:', info.response);
     }).catch(error => {
-      console.error('Email delivery failed:', error.message);
+      console.error('Email delivery failed:', error.message, error.code);
     });
+  } else {
+    console.warn('Mail transport not configured');
   }
 });
 
@@ -126,4 +131,8 @@ app.get('/api/stats', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Flux Conseil server running on http://localhost:${PORT}`);
+  console.log(`Mail configured: ${mailConfigured}`);
+  if (mailConfigured) {
+    console.log(`Sending emails to: ${process.env.MAIL_TO}`);
+  }
 });
