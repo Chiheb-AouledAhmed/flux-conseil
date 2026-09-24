@@ -37,6 +37,18 @@ async function sendMail({ to, from, replyTo, subject, text, html }) {
   return res.json();
 }
 
+// Deliberately loose: the browser's type="email" does the fine-grained check;
+// this just rejects obviously broken values and header-injection attempts.
+const EMAIL_RE = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]{2,}$/;
+
+function escapeHtml(value) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -54,14 +66,20 @@ function writeSubmissions(data) {
 
 // Contact form submission
 app.post('/api/contact', async (req, res) => {
-  const { name, company, message } = req.body || {};
+  const { name, email, company, message } = req.body || {};
 
-  if (!name || !message) {
-    return res.status(400).json({ ok: false, error: 'Nom et message requis.' });
+  if (!name || !email || !message) {
+    return res.status(400).json({ ok: false, error: 'Nom, email et message requis.' });
+  }
+
+  const cleanEmail = String(email).trim().slice(0, 254);
+  if (!EMAIL_RE.test(cleanEmail)) {
+    return res.status(400).json({ ok: false, error: 'Adresse email invalide.' });
   }
 
   const entry = {
     name: String(name).slice(0, 200),
+    email: cleanEmail,
     company: String(company || '').slice(0, 200),
     message: String(message).slice(0, 4000),
     receivedAt: new Date().toISOString(),
@@ -79,6 +97,7 @@ app.post('/api/contact', async (req, res) => {
     console.log(`[${new Date().toISOString()}] Attempting to send email to:`, process.env.MAIL_TO);
     const mailBody = [
       `Nom: ${entry.name}`,
+      `Email: ${entry.email}`,
       `Entreprise: ${entry.company || 'Non renseignée'}`,
       `Reçu le: ${entry.receivedAt}`,
       '',
@@ -89,16 +108,19 @@ app.post('/api/contact', async (req, res) => {
     sendMail({
       from: process.env.MAIL_FROM,
       to: process.env.MAIL_TO,
-      replyTo: process.env.MAIL_FROM,
-      subject: `Nouveau message de ${entry.name}`,
+      // "Reply" in the inbox goes straight to the visitor; MAIL_FROM must stay
+      // a Resend-verified sender, so the visitor's address can't go there.
+      replyTo: entry.email,
+      subject: `Nouveau message de ${entry.name} <${entry.email}>`,
       text: mailBody,
       html: `<h2>Nouvelle demande de contact</h2>
-        <p><strong>Nom:</strong> ${entry.name}</p>
-        <p><strong>Entreprise:</strong> ${entry.company || 'Non renseignée'}</p>
+        <p><strong>Nom:</strong> ${escapeHtml(entry.name)}</p>
+        <p><strong>Email:</strong> <a href="mailto:${escapeHtml(entry.email)}">${escapeHtml(entry.email)}</a></p>
+        <p><strong>Entreprise:</strong> ${escapeHtml(entry.company) || 'Non renseignée'}</p>
         <p><strong>Reçu le:</strong> ${entry.receivedAt}</p>
         <hr>
         <p><strong>Demande:</strong></p>
-        <p>${entry.message.replaceAll('\n', '<br>')}</p>`,
+        <p>${escapeHtml(entry.message).replaceAll('\n', '<br>')}</p>`,
     })
       .then(() => {
         console.log(`[${new Date().toISOString()}] Email sent successfully`);
